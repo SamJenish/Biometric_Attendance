@@ -10,8 +10,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        body: ['Inter', 'sans-serif'],
-        headline: ['Inter', 'sans-serif'],
+        body: ['Poppins', 'sans-serif'],
+        headline: ['Poppins', 'sans-serif'],
         code: ['monospace'],
       },
       colors: {
@@ -88,10 +88,15 @@ export default {
             height: '0',
           },
         },
+        'glow': {
+          '0%, 100%': { boxShadow: '0 0 15px 5px rgba(0, 194, 168, 0.2)' },
+          '50%': { boxShadow: '0 0 30px 10px rgba(0, 194, 168, 0.4)' },
+        }
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        'glow': 'glow 2s infinite ease-in-out',
       },
     },
   },
