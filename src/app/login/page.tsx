@@ -21,12 +21,15 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // Dummy logic as per requirement: admin@gmail.com -> Admin, others -> Student
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       if (email === 'admin@gmail.com') {
         localStorage.setItem('userRole', 'admin');
         router.push('/admin');
+      } else if (email === 'teacher@gmail.com' && password === 'teacher') {
+        localStorage.setItem('userRole', 'teacher');
+        localStorage.setItem('teacherId', email.split('@')[0]);
+        router.push('/teacher');
       } else if (email) {
         localStorage.setItem('userRole', 'student');
         localStorage.setItem('studentId', email.split('@')[0]);
@@ -47,7 +50,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-background relative overflow-hidden">
-      {/* Background Orbs for futuristic feel */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-secondary/10 rounded-full blur-[100px]" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px]" />
 
@@ -101,7 +103,7 @@ export default function LoginPage() {
           </form>
           <div className="mt-6 pt-6 border-t border-slate-100 text-center">
             <p className="text-sm text-slate-400">
-              Demo: admin@gmail.com / student@gmail.com
+              Demo: teacher@gmail.com / teacher
             </p>
           </div>
         </CardContent>

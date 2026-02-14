@@ -5,13 +5,14 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { LogOut, MapPin, BookOpen, Clock } from 'lucide-react';
+import { LogOut, MapPin, BookOpen, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import BiometricButton from '@/components/BiometricButton';
-import { recordAttendance } from '@/lib/attendance';
+import { recordAttendance, subscribeToActiveSessions, ActiveSession } from '@/lib/attendance';
 
 export default function StudentDashboard() {
   const [studentId, setStudentId] = useState('');
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [subject, setSubject] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentDate, setCurrentDate] = useState('');
@@ -26,13 +27,24 @@ export default function StudentDashboard() {
     } else {
       setStudentId(id);
     }
+    
     setCurrentDate(new Date().toLocaleDateString('en-US', { 
       weekday: 'long', 
       year: 'numeric', 
       month: 'long', 
       day: 'numeric' 
     }));
-  }, [router]);
+
+    const unsubscribe = subscribeToActiveSessions((sessions) => {
+      setActiveSessions(sessions);
+      // If currently selected subject session ends, reset selection
+      if (subject && !sessions.find(s => s.id === subject)) {
+        setSubject('');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router, subject]);
 
   const handleMarkAttendance = () => {
     if (!subject) {
@@ -46,7 +58,6 @@ export default function StudentDashboard() {
 
     setIsLoading(true);
     
-    // Attempting to get geolocation
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
@@ -97,10 +108,9 @@ export default function StudentDashboard() {
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-8 flex flex-col items-center">
-      {/* Header */}
       <div className="w-full max-w-2xl flex justify-between items-start mb-12">
         <div className="space-y-1">
-          <p className="text-secondary font-semibold text-sm tracking-widest uppercase">Dashboard</p>
+          <p className="text-secondary font-semibold text-sm tracking-widest uppercase">Student Portal</p>
           <h1 className="text-4xl font-bold text-primary tracking-tight">Welcome, {studentId}!</h1>
           <p className="text-slate-500">{currentDate}</p>
         </div>
@@ -109,27 +119,36 @@ export default function StudentDashboard() {
         </Button>
       </div>
 
-      {/* Main Content */}
       <div className="w-full max-w-2xl space-y-8">
         <Card className="border-none shadow-none bg-transparent">
           <CardContent className="p-0 space-y-8">
             <div className="space-y-3">
-              <label className="text-sm font-semibold text-primary ml-1">Select Active Class</label>
-              <Select onValueChange={setSubject} value={subject}>
-                <SelectTrigger className="h-14 rounded-2xl bg-white border-slate-200 shadow-sm text-lg px-6">
-                  <SelectValue placeholder="Which subject are you attending?" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Computer Science 101">Computer Science 101</SelectItem>
-                  <SelectItem value="Digital Marketing">Digital Marketing</SelectItem>
-                  <SelectItem value="Advanced Mathematics">Advanced Mathematics</SelectItem>
-                  <SelectItem value="Modern Architecture">Modern Architecture</SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="text-sm font-semibold text-primary ml-1">Available Classes</label>
+              {activeSessions.length > 0 ? (
+                <Select onValueChange={setSubject} value={subject}>
+                  <SelectTrigger className="h-14 rounded-2xl bg-white border-slate-200 shadow-sm text-lg px-6">
+                    <SelectValue placeholder="Select a live session..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeSessions.map(session => (
+                      <SelectItem key={session.id} value={session.id}>{session.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-center gap-3 text-amber-800">
+                  <AlertCircle className="w-5 h-5 text-amber-500" />
+                  <p className="text-sm font-medium">No sessions are currently active. Wait for your teacher to start one.</p>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-center py-10">
-              <BiometricButton onSuccess={handleMarkAttendance} isLoading={isLoading} />
+              <BiometricButton 
+                onSuccess={handleMarkAttendance} 
+                isLoading={isLoading} 
+                disabled={!subject}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -139,7 +158,7 @@ export default function StudentDashboard() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-tighter">Status</p>
-                  <p className="text-primary font-bold">Ready to Scan</p>
+                  <p className="text-primary font-bold">{subject ? 'Ready to Scan' : 'Waiting for selection'}</p>
                 </div>
               </div>
               <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col gap-3">

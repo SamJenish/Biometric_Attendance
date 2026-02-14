@@ -1,5 +1,17 @@
 import { db } from './firebase';
-import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy, onSnapshot } from 'firebase/firestore';
+import { 
+  collection, 
+  addDoc, 
+  serverTimestamp, 
+  query, 
+  where, 
+  getDocs, 
+  orderBy, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  deleteDoc 
+} from 'firebase/firestore';
 
 export const CLASSROOM_LAT = 8.7260;
 export const CLASSROOM_LNG = 77.7081;
@@ -12,6 +24,12 @@ export interface AttendanceRecord {
   timestamp: any;
   latitude: number;
   longitude: number;
+}
+
+export interface ActiveSession {
+  id: string; // subject name
+  startTime: any;
+  teacherId: string;
 }
 
 // Haversine formula to calculate distance in meters
@@ -53,6 +71,12 @@ export async function recordAttendance(studentId: string, subject: string, lat: 
     throw new Error(`Outside classroom boundary. Distance: ${Math.round(distance)}m`);
   }
 
+  // Double check session is still active
+  const sessionSnap = await getDocs(query(collection(db, 'sessions'), where('id', '==', subject)));
+  if (sessionSnap.empty) {
+    throw new Error('This session is no longer active.');
+  }
+
   const isDuplicate = await checkDuplicateAttendance(studentId, subject);
   if (isDuplicate) {
     throw new Error('Attendance already marked for this subject today.');
@@ -79,5 +103,30 @@ export function subscribeToAttendance(callback: (records: AttendanceRecord[]) =>
       ...doc.data()
     } as AttendanceRecord));
     callback(records);
+  });
+}
+
+// Session Management
+export async function startSession(subject: string, teacherId: string) {
+  const sessionRef = doc(db, 'sessions', subject);
+  await setDoc(sessionRef, {
+    id: subject,
+    startTime: serverTimestamp(),
+    teacherId
+  });
+}
+
+export async function endSession(subject: string) {
+  const sessionRef = doc(db, 'sessions', subject);
+  await deleteDoc(sessionRef);
+}
+
+export function subscribeToActiveSessions(callback: (sessions: ActiveSession[]) => void) {
+  const sessionsRef = collection(db, 'sessions');
+  return onSnapshot(sessionsRef, (snapshot) => {
+    const sessions = snapshot.docs.map(doc => ({
+      ...doc.data()
+    } as ActiveSession));
+    callback(sessions);
   });
 }
