@@ -21,27 +21,40 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      if (email === 'admin@gmail.com') {
-        localStorage.setItem('userRole', 'admin');
-        router.push('/admin');
-      } else if (email === 'teacher@gmail.com' && password === 'teacher') {
-        localStorage.setItem('userRole', 'teacher');
-        localStorage.setItem('teacherId', email.split('@')[0]);
-        router.push('/teacher');
-      } else if (email) {
-        localStorage.setItem('userRole', 'student');
-        localStorage.setItem('studentId', email.split('@')[0]);
-        router.push('/student');
-      } else {
-        throw new Error('Invalid credentials');
+      const { createClient } = await import('@/lib/supabase/client');
+      const supabase = createClient();
+
+      const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) throw authError;
+
+      if (user) {
+        // Fetch user role
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+
+        const role = profile?.role || 'student';
+
+        // Store in localStorage for client-side quick access (optional, but good for compatibility)
+        localStorage.setItem('userRole', role);
+
+        if (role === 'teacher') {
+          router.push('/teacher');
+        } else {
+          router.push('/student');
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       toast({
         variant: "destructive",
         title: "Login Failed",
-        description: "Please check your email and password."
+        description: err.message || "Please check your email and password."
       });
     } finally {
       setIsLoading(false);
@@ -93,8 +106,8 @@ export default function LoginPage() {
                 />
               </div>
             </div>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="w-full bg-primary hover:bg-primary/90 text-white h-11 rounded-lg transition-all"
               disabled={isLoading}
             >

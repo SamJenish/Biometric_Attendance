@@ -1,13 +1,4 @@
 "use client"
-import {
-  collection,
-  addDoc,
-  updateDoc,
-  doc,
-  onSnapshot,
-  serverTimestamp
-} from "firebase/firestore";
-import { db, auth } from "@/lib/firebase";
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -18,12 +9,13 @@ import {
   Users,
   Play,
   Square,
-  Loader2,
   BookOpen,
   Clock
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { createClient } from '@/lib/supabase/client';
+import { sessionService } from '@/services/sessionService';
 
 const SUBJECTS = [
   "Computer Science 101",
@@ -34,38 +26,53 @@ const SUBJECTS = [
 
 export default function TeacherDashboard() {
   const [activeSession, setActiveSession] = useState<any>(null);
-  const [students, setStudents] = useState<any[]>([]); // Renamed from presentStudents to match request but keeping functionality
-
+  const [students, setStudents] = useState<any[]>([]);
   const [loadingSubject, setLoadingSubject] = useState<string | null>(null);
   const [teacherId, setTeacherId] = useState('');
+
   const router = useRouter();
   const { toast } = useToast();
+  const supabase = createClient();
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+      setTeacherId(user.id);
+
+      // Check for existing active session
+      const session = await sessionService.getActiveSession(user.id);
+
+      if (session) {
+        setActiveSession(session);
+      }
+    };
+
+    checkAuth();
+  }, [router]);
 
   const startSession = async (subjectName: string = "Demo Class") => {
     try {
-      const user = auth.currentUser || { uid: teacherId }; // Fallback to local state if auth user missing
-      const sessionRef = await addDoc(collection(db, "sessions"), {
-        teacherId: user.uid,
-        subject: subjectName,
-        isActive: true,
-        startTime: serverTimestamp()
-      });
+      setLoadingSubject(subjectName);
+      const data = await sessionService.startSession(teacherId, subjectName);
 
-      setActiveSession({ id: sessionRef.id, subject: subjectName });
+      setActiveSession(data);
       toast({ title: "Session Started", description: `Attendance open for ${subjectName}` });
     } catch (error: any) {
       console.error("Error starting session:", error);
       toast({ variant: "destructive", title: "Error", description: error.message });
+    } finally {
+      setLoadingSubject(null);
     }
   };
 
   const endSession = async () => {
     if (!activeSession) return;
     try {
-      await updateDoc(doc(db, "sessions", activeSession.id), {
-        isActive: false,
-        endTime: serverTimestamp()
-      });
+      await sessionService.endSession(activeSession.id);
 
       setActiveSession(null);
       setStudents([]);
@@ -80,32 +87,65 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!activeSession) return;
 
-    const unsub = onSnapshot(
-      collection(db, "sessions", activeSession.id, "attendance"),
-      (snapshot) => {
-        const data = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setStudents(data);
-      }
-    );
+    // Initial fetch of existing attendance
+    const fetchAttendance = async () => {
+      const { data } = await supabase
+        .from('attendance')
+        .select(`
+                *,
+                profiles:student_id (full_name)
+            `)
+        .eq('session_id', activeSession.id);
 
-    return () => unsub();
+      if (data) {
+        const formatted = data.map(record => ({
+          id: record.id,
+          studentName: (record.profiles as any)?.full_name || 'Unknown',
+          verifiedAt: record.verified_at
+        }));
+        setStudents(formatted);
+      }
+    };
+
+    fetchAttendance();
+
+    // Subscribe to new attendance records
+    const channel = supabase
+      .channel('attendance_channel')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'attendance',
+          filter: `session_id=eq.${activeSession.id}`,
+        },
+        async (payload) => {
+          // Fetch student name separately since payload is just the record
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', payload.new.student_id)
+            .single();
+
+          const newStudent = {
+            id: payload.new.id,
+            studentName: profile?.full_name || 'Unknown',
+            verifiedAt: payload.new.verified_at
+          };
+
+          setStudents(prev => [...prev, newStudent]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [activeSession]);
 
-
-  useEffect(() => {
-    const role = localStorage.getItem('userRole');
-    const id = localStorage.getItem('teacherId');
-    if (role !== 'teacher' || !id) {
-      router.push('/login');
-      return;
-    }
-    setTeacherId(id);
-  }, [router]);
-
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.clear();
     router.push('/login');
   };
@@ -168,8 +208,8 @@ export default function TeacherDashboard() {
                 <CardContent className="p-6 pt-0">
                   <Button
                     className={`w-full h-12 rounded-2xl transition-all ${isThisSessionActive
-                        ? "bg-destructive hover:bg-destructive/90 text-white"
-                        : "bg-secondary hover:bg-secondary/90 text-white"
+                      ? "bg-destructive hover:bg-destructive/90 text-white"
+                      : "bg-secondary hover:bg-secondary/90 text-white"
                       }`}
                     onClick={() => {
                       if (isThisSessionActive) {
@@ -218,7 +258,7 @@ export default function TeacherDashboard() {
                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
                     <span className="font-medium">{s.studentName}</span>
                     <span className="text-xs text-slate-400 ml-auto">
-                      {s.verifiedAt?.toDate ? format(s.verifiedAt.toDate(), 'HH:mm:ss') : 'Just now'}
+                      {s.verifiedAt ? format(new Date(s.verifiedAt), 'HH:mm:ss') : 'Just now'}
                     </span>
                   </li>
                 ))}
