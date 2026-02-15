@@ -1,4 +1,14 @@
 "use client"
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  setDoc,
+  serverTimestamp
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,12 +22,39 @@ import { recordAttendance, subscribeToActiveSessions, ActiveSession } from '@/li
 
 export default function StudentDashboard() {
   const [studentId, setStudentId] = useState('');
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+  const [activeSessions, setActiveSessions] = useState<any[]>([]);
+
   const [subject, setSubject] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentDate, setCurrentDate] = useState('');
   const router = useRouter();
   const { toast } = useToast();
+useEffect(() => {
+  const q = query(
+    collection(db, "sessions"),
+    where("isActive", "==", true)
+  );
+
+  const unsub = onSnapshot(q, (snapshot) => {
+    const sessions = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    setActiveSessions(sessions);
+  });
+
+  return () => unsub();
+}, []);
+const markAttendance = async (sessionId: string) => {
+  await setDoc(
+    doc(db, "sessions", sessionId, "attendance", user.uid),
+    {
+      studentName: user.email,
+      verifiedAt: serverTimestamp(),
+      deviceInfo: navigator.userAgent
+    }
+  );
+};
 
   useEffect(() => {
     const role = localStorage.getItem('userRole');
@@ -45,6 +82,16 @@ export default function StudentDashboard() {
 
     return () => unsubscribe();
   }, [router, subject]);
+<h3>Active Sessions</h3>
+
+{activeSessions.map((session) => (
+  <div key={session.id}>
+    <p>{session.subject}</p>
+    <button onClick={() => handleBiometric(session.id)}>
+      Verify Attendance
+    </button>
+  </div>
+))}
 
   const handleMarkAttendance = () => {
     if (!subject) {

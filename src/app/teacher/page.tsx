@@ -1,4 +1,13 @@
 "use client"
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -26,11 +35,51 @@ const SUBJECTS = [
 ];
 
 export default function TeacherDashboard() {
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+  const [activeSession, setActiveSession] = useState<any>(null);
+  const [presentStudents, setPresentStudents] = useState<any[]>([]);
+
   const [loadingSubject, setLoadingSubject] = useState<string | null>(null);
   const [teacherId, setTeacherId] = useState('');
   const router = useRouter();
   const { toast } = useToast();
+  const startSession = async () => {
+  const sessionRef = await addDoc(collection(db, "sessions"), {
+    teacherId: user.uid,
+    subject: "Class Session",
+    isActive: true,
+    startTime: serverTimestamp(),
+  });
+
+  setActiveSession({ id: sessionRef.id });
+};
+const endSession = async () => {
+  if (!activeSession) return;
+
+  await updateDoc(doc(db, "sessions", activeSession.id), {
+    isActive: false,
+    endTime: serverTimestamp(),
+  });
+
+  setActiveSession(null);
+  setPresentStudents([]);
+};
+useEffect(() => {
+  if (!activeSession) return;
+
+  const unsub = onSnapshot(
+    collection(db, "sessions", activeSession.id, "attendance"),
+    (snapshot) => {
+      const students = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setPresentStudents(students);
+    }
+  );
+
+  return () => unsub();
+}, [activeSession]);
+
 
   useEffect(() => {
     const role = localStorage.getItem('userRole');
@@ -128,6 +177,16 @@ export default function TeacherDashboard() {
                     )}
                   </CardDescription>
                 </CardHeader>
+                <button onClick={startSession}>Start Session</button>
+                    <button onClick={endSession}>End Session</button>
+
+                    <h3>Live Attendance</h3>
+                    <ul>
+                      {presentStudents.map((s) => (
+                        <li key={s.id}>{s.studentName}</li>
+                      ))}
+                    </ul>
+
                 <CardContent className="p-6 pt-0">
                   <Button 
                     className={`w-full h-12 rounded-2xl transition-all ${
