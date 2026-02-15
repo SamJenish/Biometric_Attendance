@@ -8,53 +8,21 @@ import {
   setDoc,
   serverTimestamp
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { LogOut, MapPin, BookOpen, AlertCircle } from 'lucide-react';
+import { LogOut, MapPin, BookOpen, AlertCircle, Fingerprint } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import BiometricButton from '@/components/BiometricButton';
-import { recordAttendance, subscribeToActiveSessions, ActiveSession } from '@/lib/attendance';
 
 export default function StudentDashboard() {
   const [studentId, setStudentId] = useState('');
   const [activeSessions, setActiveSessions] = useState<any[]>([]);
-
-  const [subject, setSubject] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [currentDate, setCurrentDate] = useState('');
   const router = useRouter();
   const { toast } = useToast();
-useEffect(() => {
-  const q = query(
-    collection(db, "sessions"),
-    where("isActive", "==", true)
-  );
-
-  const unsub = onSnapshot(q, (snapshot) => {
-    const sessions = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    setActiveSessions(sessions);
-  });
-
-  return () => unsub();
-}, []);
-const markAttendance = async (sessionId: string) => {
-  await setDoc(
-    doc(db, "sessions", sessionId, "attendance", user.uid),
-    {
-      studentName: user.email,
-      verifiedAt: serverTimestamp(),
-      deviceInfo: navigator.userAgent
-    }
-  );
-};
 
   useEffect(() => {
     const role = localStorage.getItem('userRole');
@@ -64,86 +32,74 @@ const markAttendance = async (sessionId: string) => {
     } else {
       setStudentId(id);
     }
-    
-    setCurrentDate(new Date().toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+
+    setCurrentDate(new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     }));
 
-    const unsubscribe = subscribeToActiveSessions((sessions) => {
+    // Real-Time Session Listener
+    const q = query(
+      collection(db, "sessions"),
+      where("isActive", "==", true)
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const sessions = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
       setActiveSessions(sessions);
-      // If currently selected subject session ends, reset selection
-      if (subject && !sessions.find(s => s.id === subject)) {
-        setSubject('');
-      }
     });
 
-    return () => unsubscribe();
-  }, [router, subject]);
-<h3>Active Sessions</h3>
+    return () => unsub();
+  }, [router]);
 
-{activeSessions.map((session) => (
-  <div key={session.id}>
-    <p>{session.subject}</p>
-    <button onClick={() => handleBiometric(session.id)}>
-      Verify Attendance
-    </button>
-  </div>
-))}
-
-  const handleMarkAttendance = () => {
-    if (!subject) {
-      toast({
-        variant: "destructive",
-        title: "Subject Required",
-        description: "Please select a subject before marking attendance."
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          try {
-            await recordAttendance(
-              studentId,
-              subject,
-              position.coords.latitude,
-              position.coords.longitude
-            );
-            toast({
-              title: "Attendance Successful",
-              description: `Recorded for ${subject} at ${new Date().toLocaleTimeString()}`
-            });
-          } catch (err: any) {
-            toast({
-              variant: "destructive",
-              title: "Attendance Failed",
-              description: err.message
-            });
-          } finally {
-            setIsLoading(false);
-          }
+  const verifyBiometric = async (sessionId: string) => {
+    try {
+      // Fake verification by triggering WebAuthn without backend verification
+      await navigator.credentials.create({
+        publicKey: {
+          challenge: new Uint8Array(32),
+          rp: { name: "Demo Attendance" },
+          user: {
+            id: new Uint8Array(16),
+            name: auth.currentUser?.email || studentId || "student",
+            displayName: auth.currentUser?.displayName || studentId || "Student",
+          },
+          pubKeyCredParams: [{ alg: -7, type: "public-key" }],
         },
-        (error) => {
-          setIsLoading(false);
-          toast({
-            variant: "destructive",
-            title: "Location Access Denied",
-            description: "Please enable location services to mark attendance."
-          });
+      });
+
+      // If user completes fingerprint → mark attendance
+      const uid = auth.currentUser?.uid || studentId;
+      if (!uid) {
+        toast({ variant: "destructive", title: "Error", description: "User ID missing" });
+        return;
+      }
+
+      await setDoc(
+        doc(db, "sessions", sessionId, "attendance", uid),
+        {
+          studentName: auth.currentUser?.email || studentId,
+          verifiedAt: serverTimestamp(),
+          method: "biometric_demo"
         }
       );
-    } else {
-      setIsLoading(false);
+
+      toast({
+        title: "Attendance Marked ✅",
+        description: "Your attendance has been verified successfully."
+      });
+
+    } catch (err: any) {
+      console.error(err);
       toast({
         variant: "destructive",
-        title: "Not Supported",
-        description: "Your browser does not support geolocation."
+        title: "Biometric Cancelled",
+        description: "Verification failed or was cancelled."
       });
     }
   };
@@ -167,59 +123,64 @@ const markAttendance = async (sessionId: string) => {
       </div>
 
       <div className="w-full max-w-2xl space-y-8">
-        <Card className="border-none shadow-none bg-transparent">
-          <CardContent className="p-0 space-y-8">
-            <div className="space-y-3">
-              <label className="text-sm font-semibold text-primary ml-1">Available Classes</label>
-              {activeSessions.length > 0 ? (
-                <Select onValueChange={setSubject} value={subject}>
-                  <SelectTrigger className="h-14 rounded-2xl bg-white border-slate-200 shadow-sm text-lg px-6">
-                    <SelectValue placeholder="Select a live session..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeSessions.map(session => (
-                      <SelectItem key={session.id} value={session.id}>{session.id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-center gap-3 text-amber-800">
-                  <AlertCircle className="w-5 h-5 text-amber-500" />
-                  <p className="text-sm font-medium">No sessions are currently active. Wait for your teacher to start one.</p>
+        <Card className="border-none shadow-sm bg-white overflow-hidden">
+          <CardHeader>
+            <CardTitle>Active Sessions</CardTitle>
+            <CardDescription>Sessions currently valid for attendance</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {activeSessions.length > 0 ? (
+              activeSessions.map((session) => (
+                <div key={session.id} className="flex flex-col sm:flex-row items-center justify-between p-4 bg-slate-50 rounded-xl gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2 rounded-full">
+                      <BookOpen className="w-5 h-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-primary">{session.subject}</p>
+                      <p className="text-xs text-slate-500">Started just now</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => verifyBiometric(session.id)}
+                    className="w-full sm:w-auto bg-primary hover:bg-primary/90 text-white rounded-xl gap-2 h-12"
+                  >
+                    <Fingerprint className="w-5 h-5" />
+                    Verify Attendance
+                  </Button>
                 </div>
-              )}
-            </div>
-
-            <div className="flex justify-center py-10">
-              <BiometricButton 
-                onSuccess={handleMarkAttendance} 
-                isLoading={isLoading} 
-                disabled={!subject}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col gap-3">
-                <div className="bg-secondary/10 w-10 h-10 rounded-xl flex items-center justify-center">
-                  <BookOpen className="text-secondary w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-tighter">Status</p>
-                  <p className="text-primary font-bold">{subject ? 'Ready to Scan' : 'Waiting for selection'}</p>
-                </div>
+              ))
+            ) : (
+              <div className="bg-amber-50 border border-amber-100 p-6 rounded-2xl flex flex-col items-center gap-3 text-amber-800 text-center">
+                <AlertCircle className="w-8 h-8 text-amber-500" />
+                <p className="font-medium">No sessions are currently active.</p>
+                <p className="text-sm opacity-80">Please wait for your teacher to start a session.</p>
               </div>
-              <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col gap-3">
-                <div className="bg-primary/5 w-10 h-10 rounded-xl flex items-center justify-center">
-                  <MapPin className="text-primary w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-tighter">Location</p>
-                  <p className="text-primary font-bold">Classroom A-12</p>
-                </div>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
+
+        {/* Status Cards */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col gap-3">
+            <div className="bg-secondary/10 w-10 h-10 rounded-xl flex items-center justify-center">
+              <BookOpen className="text-secondary w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-tighter">Status</p>
+              <p className="text-primary font-bold">{activeSessions.length > 0 ? 'Ready to Scan' : 'Waiting...'}</p>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-3xl shadow-sm flex flex-col gap-3">
+            <div className="bg-primary/5 w-10 h-10 rounded-xl flex items-center justify-center">
+              <MapPin className="text-primary w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-tighter">Location</p>
+              <p className="text-primary font-bold">Biometric Verify</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

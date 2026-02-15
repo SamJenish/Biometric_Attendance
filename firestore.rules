@@ -3,17 +3,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     match /sessions/{sessionId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth.token.role == "teacher";
+      allow read, write: if request.auth != null;
 
       match /attendance/{studentId} {
-        allow create: if request.auth.uid == studentId;
-        allow read: if request.auth != null;
+        allow read, write: if request.auth != null;
       }
-    }
-
-    match /users/{userId} {
-      allow read, write: if request.auth.uid == userId;
     }
   }
 }

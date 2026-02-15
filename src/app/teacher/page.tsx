@@ -7,23 +7,21 @@ import {
   onSnapshot,
   serverTimestamp
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase";
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { 
-  LogOut, 
-  Users, 
-  Play, 
-  Square, 
+import {
+  LogOut,
+  Users,
+  Play,
+  Square,
   Loader2,
   BookOpen,
-  CheckCircle2,
   Clock
 } from 'lucide-react';
-import { startSession, endSession, subscribeToActiveSessions, ActiveSession } from '@/lib/attendance';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -36,49 +34,65 @@ const SUBJECTS = [
 
 export default function TeacherDashboard() {
   const [activeSession, setActiveSession] = useState<any>(null);
-  const [presentStudents, setPresentStudents] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]); // Renamed from presentStudents to match request but keeping functionality
 
   const [loadingSubject, setLoadingSubject] = useState<string | null>(null);
   const [teacherId, setTeacherId] = useState('');
   const router = useRouter();
   const { toast } = useToast();
-  const startSession = async () => {
-  const sessionRef = await addDoc(collection(db, "sessions"), {
-    teacherId: user.uid,
-    subject: "Class Session",
-    isActive: true,
-    startTime: serverTimestamp(),
-  });
 
-  setActiveSession({ id: sessionRef.id });
-};
-const endSession = async () => {
-  if (!activeSession) return;
+  const startSession = async (subjectName: string = "Demo Class") => {
+    try {
+      const user = auth.currentUser || { uid: teacherId }; // Fallback to local state if auth user missing
+      const sessionRef = await addDoc(collection(db, "sessions"), {
+        teacherId: user.uid,
+        subject: subjectName,
+        isActive: true,
+        startTime: serverTimestamp()
+      });
 
-  await updateDoc(doc(db, "sessions", activeSession.id), {
-    isActive: false,
-    endTime: serverTimestamp(),
-  });
-
-  setActiveSession(null);
-  setPresentStudents([]);
-};
-useEffect(() => {
-  if (!activeSession) return;
-
-  const unsub = onSnapshot(
-    collection(db, "sessions", activeSession.id, "attendance"),
-    (snapshot) => {
-      const students = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setPresentStudents(students);
+      setActiveSession({ id: sessionRef.id, subject: subjectName });
+      toast({ title: "Session Started", description: `Attendance open for ${subjectName}` });
+    } catch (error: any) {
+      console.error("Error starting session:", error);
+      toast({ variant: "destructive", title: "Error", description: error.message });
     }
-  );
+  };
 
-  return () => unsub();
-}, [activeSession]);
+  const endSession = async () => {
+    if (!activeSession) return;
+    try {
+      await updateDoc(doc(db, "sessions", activeSession.id), {
+        isActive: false,
+        endTime: serverTimestamp()
+      });
+
+      setActiveSession(null);
+      setStudents([]);
+      toast({ title: "Session Ended", description: "Attendance closed." });
+    } catch (error: any) {
+      console.error("Error ending session:", error);
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    }
+  };
+
+  // Real-Time Attendance Listener
+  useEffect(() => {
+    if (!activeSession) return;
+
+    const unsub = onSnapshot(
+      collection(db, "sessions", activeSession.id, "attendance"),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setStudents(data);
+      }
+    );
+
+    return () => unsub();
+  }, [activeSession]);
 
 
   useEffect(() => {
@@ -89,35 +103,7 @@ useEffect(() => {
       return;
     }
     setTeacherId(id);
-
-    const unsubscribe = subscribeToActiveSessions((sessions) => {
-      setActiveSessions(sessions);
-    });
-
-    return () => unsubscribe();
   }, [router]);
-
-  const handleToggleSession = async (subject: string) => {
-    const isActive = activeSessions.find(s => s.id === subject);
-    setLoadingSubject(subject);
-    try {
-      if (isActive) {
-        await endSession(subject);
-        toast({ title: "Session Stopped", description: `Attendance closed for ${subject}` });
-      } else {
-        await startSession(subject, teacherId);
-        toast({ title: "Session Started", description: `Students can now mark attendance for ${subject}` });
-      }
-    } catch (err: any) {
-      toast({
-        variant: "destructive",
-        title: "Action Failed",
-        description: err.message
-      });
-    } finally {
-      setLoadingSubject(null);
-    }
-  };
 
   const handleLogout = () => {
     localStorage.clear();
@@ -146,10 +132,18 @@ useEffect(() => {
           <p className="text-slate-500">Start a session to enable student biometric attendance.</p>
         </div>
 
+        {/* Demo Controls Integration */}
+        {activeSession && (
+          <div className="bg-green-50 p-4 rounded-xl border border-green-200 mb-6">
+            <h3 className="text-lg font-semibold text-green-800 flex items-center gap-2">
+              <Clock className="w-5 h-5" /> Live Session: {activeSession.subject}
+            </h3>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {SUBJECTS.map((subject) => {
-            const session = activeSessions.find(s => s.id === subject);
-            const isActive = !!session;
+            const isThisSessionActive = activeSession?.subject === subject;
             const isLoading = loadingSubject === subject;
 
             return (
@@ -159,7 +153,7 @@ useEffect(() => {
                     <div className="bg-primary/5 p-3 rounded-2xl group-hover:bg-primary/10 transition-colors">
                       <BookOpen className="w-6 h-6 text-primary" />
                     </div>
-                    {isActive && (
+                    {isThisSessionActive && (
                       <span className="flex items-center gap-1.5 text-[10px] font-bold text-secondary bg-secondary/10 px-2 py-1 rounded-full animate-pulse">
                         LIVE NOW
                       </span>
@@ -167,47 +161,38 @@ useEffect(() => {
                   </div>
                   <CardTitle className="mt-4 text-xl font-bold">{subject}</CardTitle>
                   <CardDescription>
-                    {isActive ? (
-                      <span className="flex items-center gap-1 text-slate-500">
-                        <Clock className="w-3 h-3" />
-                        Started at {session.startTime?.toDate ? format(session.startTime.toDate(), 'HH:mm') : 'Just now'}
-                      </span>
-                    ) : (
-                      "No active session"
-                    )}
+                    {isThisSessionActive ? "Session Verified" : "No active session"}
                   </CardDescription>
                 </CardHeader>
-                <button onClick={startSession}>Start Session</button>
-                    <button onClick={endSession}>End Session</button>
-
-                    <h3>Live Attendance</h3>
-                    <ul>
-                      {presentStudents.map((s) => (
-                        <li key={s.id}>{s.studentName}</li>
-                      ))}
-                    </ul>
 
                 <CardContent className="p-6 pt-0">
-                  <Button 
-                    className={`w-full h-12 rounded-2xl transition-all ${
-                      isActive 
-                        ? "bg-destructive hover:bg-destructive/90 text-white" 
+                  <Button
+                    className={`w-full h-12 rounded-2xl transition-all ${isThisSessionActive
+                        ? "bg-destructive hover:bg-destructive/90 text-white"
                         : "bg-secondary hover:bg-secondary/90 text-white"
-                    }`}
-                    onClick={() => handleToggleSession(subject)}
+                      }`}
+                    onClick={() => {
+                      if (isThisSessionActive) {
+                        endSession();
+                      } else {
+                        if (activeSession) {
+                          toast({ title: "Session Active", description: "Please end the current session first.", variant: "destructive" });
+                        } else {
+                          startSession(subject);
+                        }
+                      }
+                    }}
                     disabled={isLoading}
                   >
-                    {isLoading ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : isActive ? (
+                    {isThisSessionActive ? (
                       <>
                         <Square className="w-4 h-4 mr-2 fill-current" />
-                        End Attendance
+                        End Session
                       </>
                     ) : (
                       <>
                         <Play className="w-4 h-4 mr-2 fill-current" />
-                        Start Attendance
+                        Start Session
                       </>
                     )}
                   </Button>
@@ -216,6 +201,31 @@ useEffect(() => {
             );
           })}
         </div>
+
+        {/* Live Attendance Section */}
+        <Card className="rounded-3xl border-none shadow-sm bg-white">
+          <CardHeader>
+            <CardTitle>Live Attendance</CardTitle>
+            <CardDescription>Real-time updates of verified students</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {students.length === 0 ? (
+              <p className="text-slate-500 italic">No attendance marked yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {students.map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
+                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                    <span className="font-medium">{s.studentName}</span>
+                    <span className="text-xs text-slate-400 ml-auto">
+                      {s.verifiedAt?.toDate ? format(s.verifiedAt.toDate(), 'HH:mm:ss') : 'Just now'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       </main>
     </div>
   );
